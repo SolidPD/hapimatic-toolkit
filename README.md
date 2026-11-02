@@ -2,7 +2,7 @@
 
 The core tier of a [Claude Code](https://claude.com/claude-code) hook system: one hook
 dispatcher, a plugin loader, and a small set of general-purpose hooks, installed into
-`~/.claude/` with per-file symlinks.
+`~/.claude/` as plain file copies (or, with `--symlink`, as links to this repository).
 
 ## What is in it
 
@@ -35,7 +35,8 @@ of their code. Without them, the routing stubs never match and nothing else chan
 
 ## Install
 
-Requirements: `bash`, `git`, `python3` (3.10 or newer) and `jq`.
+Requirements: `bash`, `git`, `python3` (3.10 or newer), `jq`, and `sha256sum` or
+`shasum` (Linux and macOS ship one).
 
 ```bash
 git clone <this repository> ~/claude-core
@@ -44,12 +45,26 @@ cd ~/claude-core
 ./install.sh --minimal             # install
 ```
 
-`install.sh` links each file into `~/.claude/` and records it in
-`~/.claude/.toolkit-state/manifest.json`. A file that already exists there and is not one
-of these links is never silently overwritten: you are asked whether to keep, replace, skip
-or diff it (with no terminal, it is skipped). `--yes` skips such files without asking and
-`--force` replaces them. A file is backed up, under `~/.claude/.toolkit-state/conflicts/`,
-only when it is replaced. `--target DIR` installs somewhere other than `~/.claude`.
+`install.sh` copies each file into `~/.claude/` and records it, with its hash, in
+`~/.claude/.toolkit-state/manifest.json`. The copies are ordinary files (executable where
+the source is), so the installed hooks keep working if you move or delete this clone.
+`--symlink` links each file to this repository instead, so edits made here are live at
+once; re-running with the other flag converts the files the installer wrote.
+
+A file that already exists there and was not written by the installer is never silently
+overwritten: you are asked whether to keep, replace, skip, or diff it (with no terminal, it
+is skipped). The one exception is `--symlink`, which re-points a symlink already in place
+to this repository without asking. A copy you edited after the install counts as your file
+too. With copies, so does a file that was already there with the same content: it is
+recorded, but its content is never updated without asking and the uninstaller never
+removes it (only an executable bit that differs from the source's is corrected, to mode
+0755 or 0644). `--yes` skips such files without asking and `--force` replaces them. A file
+is backed up, under `~/.claude/.toolkit-state/conflicts/`, only when it is replaced, and a
+file that cannot be backed up is left as it is (that does not fail the install). A
+directory is never replaced. If a file cannot be written (a
+read-only directory, a full disk), the install stops with an error before `settings.json`
+is changed; fix the cause and run it again. `--target DIR` installs somewhere other than
+`~/.claude`.
 
 `settings.json` is merged, not replaced: the installer adds one `hook-dispatcher.py` entry
 per hook event and fills a few defaults (MCP and Bash timeouts, a short list of read-only
@@ -62,11 +77,17 @@ them in `~/.claude/.toolkit-state/user-settings.partial.json`; they are merged l
 ## Update
 
 ```bash
-cd ~/claude-core && git pull
+cd ~/claude-core && git pull && ./install.sh --minimal
 ```
 
-The installed files are symlinks, so a pull updates them in place. Run
-`./install.sh --minimal` again only if a release adds or removes files.
+The installed files are copies, so pull and then re-run the installer: it updates every
+copy whose source changed, adds the files new in this release, and corrects an executable
+bit that differs from the source's. A copy you edited is treated as your file, so you are
+asked before it is replaced.
+
+The earlier update step, `cd ~/claude-core && git pull` on its own, now updates only a
+`--symlink` install, whose links follow this repository. For a copy install it leaves the
+installed files as they were, so always run `./install.sh --minimal` after the pull.
 
 ## Uninstall
 
@@ -74,10 +95,11 @@ The installed files are symlinks, so a pull updates them in place. Run
 cd ~/claude-core && ./uninstall.sh
 ```
 
-The uninstaller removes only the links it recorded, and only while they still point here.
-A file you replaced or re-pointed is reported and kept. It also removes the
-`hook-dispatcher.py` entries from `settings.json`; the timeout and permission defaults the
-installer filled in stay, since they may now be yours. A backup of the `settings.json` you
+The uninstaller removes only the files it recorded: copies you have not edited, and links
+that still point here. A file you edited, replaced, or re-pointed is reported and kept,
+and so is a file that was already there, with the same content, before the install. It
+also removes the `hook-dispatcher.py` entries from `settings.json`; the timeout and
+permission defaults the installer filled in stay, since they may now be yours. A backup of the `settings.json` you
 had before the first install is kept in `~/.claude/.toolkit-state/`.
 
 ## Versions

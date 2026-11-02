@@ -1,7 +1,7 @@
 """
 Stall Tracker - Shared State for Stall Detection Hooks
 
-VERSION: 1.0.0
+VERSION: 1.1.0
 
 Provides functions to record and query tool failure counts per session.
 Used by stall-logger.py (PostToolUseFailure) to record failures and
@@ -9,7 +9,7 @@ tool-timeout-enforcer.py (PreToolUse) to detect retry loops.
 
 State is stored in per-session JSON files under ~/.claude/hooks/state/.
 Files are named stall-counts-{session_hash}.json where session_hash is
-a short hash of the session_id.
+the first 12 hex characters of the sha256 of the session_id.
 
 This module is completely fail-safe: no exception will ever propagate
 to the caller.
@@ -34,7 +34,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 STATE_DIR = Path.home() / ".claude" / "hooks" / "state"
 
@@ -44,7 +44,7 @@ RETRY_THRESHOLD = 3
 
 def _session_file(session_id: str) -> Path:
     """Get the state file path for a given session."""
-    session_hash = hashlib.md5(session_id.encode()).hexdigest()[:12]
+    session_hash = hashlib.sha256(session_id.encode()).hexdigest()[:12]
     return STATE_DIR / f"stall-counts-{session_hash}.json"
 
 

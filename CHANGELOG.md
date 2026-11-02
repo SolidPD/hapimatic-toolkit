@@ -1,8 +1,8 @@
 # Changelog
 
-## v1.0.0 — 2026-10-08
+## v1.1.0 — 2026-11-01
 
-generated-from: rp1-home@507fe9cb8062981346054fa76135784a74e5be5f
+generated-from: rp1-home@19941cb81cde018cd0555741d7757fbd02a7fca5
 
 The generated core tier: the hook dispatcher and the prompt dispatcher, the plugin
 registry-fragment loader and its SessionStart version warner, the hook registration

@@ -1,7 +1,7 @@
 """
 Hook Registration Validator — bidirectional consistency check.
 
-VERSION: 1.10.0
+VERSION: 1.11.0
 
 Validates that the set of hooks registered in `~/.claude/settings.json` (plus
 `lib/detector_registry.py`, `lib/hook_priorities.py`, `tests/test_hook_priorities.py`)
@@ -157,6 +157,19 @@ Catches three classes of drift:
   code path is gated on >= 1 fragment-bearing plugin, so with none the human and `--json` output
   are byte-identical to v1.9.0 (R8). Results land in `ValidationReport.plugins`.
 
+- **#2213 sink follow-ups (v1.11.0, rp1-home #2626)**: (S1) a `hooks/registry-fragment.py` at a
+  `.claude-plugin/marketplace.json` source the `plugins/*/` walk never reaches — a top-level
+  (`./power-analysis-ppk2`) or repo-root (`./`), a nested or a dot-dir source — is a
+  `fragment_outside_plugins` violation (`discover_outside_plugin_fragments`), so a fragment the
+  loader would run is never a
+  silent pass; the marketplace is now read before the empty-tree return, and outside sources
+  without a fragment (RP1 today) still leave the output byte-identical. (S2) the SessionStart
+  chain detector treats `#` as an ordinary character (`lexer.commenters = ""`), so
+  `check.sh --ref=x#1 && evil` is refused. (S3) an unreadable or non-object plugin
+  `settings.json` is `native_hooks_unreadable`, like `plugin.json`. (S5) installed-set parity
+  compares `problems` too, and a computed `LIB_API_VERSION` is a recorded problem. S6 (the
+  strict-decode sites) belongs to #2595.
+
 The nested reverse checks are CASCADED: if a file fails R2 (missing from
 settings.json), it's NOT also reported under R3/R4 for the same file. This
 keeps the mismatch matrix per-file rather than producing duplicate noise.
@@ -206,7 +219,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
 
-__version__ = "1.10.0"
+__version__ = "1.11.0"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -357,6 +370,7 @@ PLUGIN_FOOTER_FOR_KIND: dict[str, str] = {
     "native_hooks_unreadable": "plugin_native_hook",
     "detector_position_declared": "plugin_detector",
     "unlisted_in_marketplace": "plugin_marketplace",
+    "fragment_outside_plugins": "plugin_outside_plugins",
 }
 
 # INFORMATIONAL findings (never affect the exit code):
@@ -651,6 +665,10 @@ def _shell_control_operator(cmd: str) -> Optional[str]:
     try:
         lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
+        # rp1-home #2626 S2: bash starts a comment only at a word boundary, but shlex's default
+        # `commenters="#"` drops the rest of the line at ANY `#` — so `check.sh --ref=x#1 && evil`
+        # hid the `&&` and the chained command passed as the sanctioned check.
+        lexer.commenters = ""
         for token in lexer:
             if token and set(token) <= _SHELL_CONTROL_CHARS:
                 return token
@@ -1214,12 +1232,17 @@ class FragmentStatic:
     parse_error: Optional[str] = None
 
     def comparable(self) -> dict:
-        """The static names the installed-set parity check compares (R5/Task 3)."""
+        """The static names the installed-set parity check compares (R5/Task 3).
+
+        `problems` is part of it (rp1-home #2626 S5): a declaration that cannot be read statically
+        leaves its field at the default, so without it a non-static installed copy compared equal
+        to a repo fragment that declares the default."""
         return {
             "event_entries": {k: list(v) for k, v in self.event_entries.items()},
             "detectors": [(d["name"], d["path"], d["position_declared"]) for d in self.detectors],
             "native_check": self.native_check,
             "lib_api_version": self.lib_api_version,
+            "problems": list(self.problems),
             "parse_error": self.parse_error,
         }
 
@@ -1302,7 +1325,8 @@ def extract_fragment_names(fragment_path: Path) -> FragmentStatic:
     sets `parse_error`; a declaration that is not a literal — or a contract symbol bound or
     mutated anywhere other than a plain top-level assignment (`_non_plain_bindings`) — is
     recorded in `problems`, because the contract makes a fragment pure data and a computed or
-    later-mutated value would blind every rule below.
+    later-mutated value would blind every rule below. That includes a computed
+    `LIB_API_VERSION` (rp1-home #2626 S5); a literal of the wrong type is left to the loader.
     """
     static = FragmentStatic()
     try:
@@ -1388,7 +1412,10 @@ def extract_fragment_names(fragment_path: Path) -> FragmentStatic:
 
     version_node = assigned.get("LIB_API_VERSION")
     if isinstance(version_node, ast.Constant):
+        # A literal of the wrong type is the loader's LIB_API_VERSION check, not a static problem.
         static.lib_api_version = version_node.value
+    elif version_node is not None:
+        static.problems.append("LIB_API_VERSION is not an int literal")  # rp1-home #2626 S5
     return static
 
 
@@ -1461,6 +1488,45 @@ def _marketplace_entry_for(marketplace: object, name: str) -> Optional[dict]:
             if os.path.normpath(source) == want:
                 return entry
     return None
+
+
+_MARKETPLACE_UNREAD = object()
+
+
+def discover_outside_plugin_fragments(home: Path, marketplace: object = _MARKETPLACE_UNREAD) -> list[tuple[str, Path, str]]:
+    """Fragment-bearing marketplace sources the `plugins/*/` walk never reaches (rp1-home #2626 S1).
+
+    The loader runs ANY relative marketplace source (`plugin_fragments.py` resolves it against the
+    marketplace root), but `discover_repo_plugins` walks only `<home>/plugins/*/` — so a fragment at
+    `./power-analysis-ppk2/hooks/registry-fragment.py`, `./plugins/group/x/…` or `./plugins/.x/…`
+    would run live and never be validated. Returns `(entry name, root, source)` for every relative
+    string source that normalises inside `home`, carries `hooks/registry-fragment.py`, and is not a
+    dir the walk validates. Non-local (object) sources and sources outside the validated tree are
+    skipped: neither is part of the tree under review. `marketplace` is read from disk when omitted.
+    """
+    if marketplace is _MARKETPLACE_UNREAD:
+        marketplace, _err = _read_json_file(home / MARKETPLACE_RELPATH)
+    entries = marketplace.get("plugins") if isinstance(marketplace, dict) else None
+    if not isinstance(entries, list):
+        return []
+    home_s = os.path.normpath(home)
+    # realpath: a source symlinked to a walked plugin dir IS that plugin (validated once already).
+    walked = {os.path.realpath(p) for p in discover_repo_plugins(home)}
+    found: list[tuple[str, Path, str]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        source = entry.get("source") if isinstance(entry, dict) else None
+        if not isinstance(source, str) or os.path.isabs(source):
+            continue
+        root = os.path.normpath(os.path.join(home_s, source))
+        if not (root == home_s or root.startswith(home_s + os.sep)) or os.path.realpath(root) in walked or root in seen:
+            continue
+        if not (Path(root) / FRAGMENT_RELPATH).is_file():
+            continue
+        seen.add(root)
+        name = entry.get("name")
+        found.append((name if isinstance(name, str) and name else os.path.basename(root), Path(root), source))
+    return found
 
 
 def _events_map(obj: object) -> object:
@@ -1880,7 +1946,12 @@ def _validate_one_plugin(
     settings_path = root / "settings.json"
     if settings_path.is_file():  # S10
         settings, err = _read_json_file(settings_path)
-        if isinstance(settings, dict) and "hooks" in settings:
+        if err is not None or not isinstance(settings, dict):
+            # rp1-home #2626 S3: unreadable is reported, never skipped — the same rule as plugin.json.
+            out["violations"].append(
+                _finding("native_hooks_unreadable", "settings.json", f"cannot read settings.json: {err or 'not an object'}")
+            )
+        elif "hooks" in settings:
             out["violations"].append(
                 _finding(
                     "settings_hook_not_allowed",
@@ -1904,13 +1975,17 @@ def validate_plugin_fragments(
     `known_events` mirrors the loader's `_known_events()` — the EVENT_REGISTRY keys the
     dispatcher is wired for in the validated tree (default: the legal VALID_EVENTS).
     Returns [] when the tree holds no fragment-bearing plugin, so the caller's report — and the
-    rendered output — is untouched (R8).
+    rendered output — is untouched (R8). A fragment-bearing marketplace source outside
+    `plugins/*/` is reported as a `fragment_outside_plugins` violation (rp1-home #2626 S1) —
+    the marketplace is read BEFORE the empty-tree return so such a fragment can never be a
+    silent pass; today's outside sources carry no fragment, so the R8 goldens are unchanged.
     """
     known = set(known_events) if known_events else set(VALID_EVENTS)
     plugin_dirs = discover_repo_plugins(home)
-    if not plugin_dirs:
-        return []
     marketplace, marketplace_err = _read_json_file(home / MARKETPLACE_RELPATH)
+    outside = discover_outside_plugin_fragments(home, marketplace)
+    if not plugin_dirs and not outside:
+        return []
     reports: list[dict] = []
     for plugin_dir in plugin_dirs:
         try:
@@ -1935,6 +2010,26 @@ def validate_plugin_fragments(
                 _finding("plugin_validation_error", None, f"the validator could not check this plugin: {e!r}")
             )
             reports.append(failed)
+    for name, root, source in outside:
+        # Counts are filled from the static read so the rendered row describes the fragment;
+        # none of its other rules runs — the remediation is to move it under plugins/<name>/.
+        static = extract_fragment_names(root / FRAGMENT_RELPATH)
+        report = _plugin_report(
+            name,
+            root,
+            entry_count=sum(len(mods) for mods in static.event_entries.values()),
+            detector_count=len(static.detectors),
+            native_check=static.native_check,
+        )
+        report["violations"].append(
+            _finding(
+                "fragment_outside_plugins",
+                str(FRAGMENT_RELPATH),
+                f"marketplace source {source!r} is outside the plugins/<name>/ walk — move it under plugins/{name}/ "
+                f"(epic #2211 L1 ruling); the loader would run this fragment from {source} unvalidated",
+            )
+        )
+        reports.append(report)
     return reports
 
 
@@ -2551,7 +2646,9 @@ def validate_registrations(
     # fragment-bearing plugin, so a zero-fragment tree leaves report.plugins empty and the
     # output byte-identical (R8). The shadow rule keys on the SAME core sets the loader uses:
     # same-event EVENT_REGISTRY module basenames, and every detector_registry name.
-    if plugins_installed or discover_repo_plugins(home):
+    # rp1-home #2626 S1: a fragment at a marketplace source outside plugins/*/ also opens the
+    # section (it is reported as a violation), so it can never be a silent pass.
+    if plugins_installed or discover_repo_plugins(home) or discover_outside_plugin_fragments(home):
         core_event_basenames = {
             event: {_strip_script_ext(m) for m in modules} for event, modules in registry_events.items()
         }
@@ -2755,6 +2852,15 @@ REMEDIATION_FOOTERS = {
         "  - Add {\"name\": \"<name>\", \"source\": \"./plugins/<name>\"} to the `plugins` array of\n"
         "    .claude-plugin/marketplace.json (plugin-registry-fragment-contract.md §11)."
     ),
+    "plugin_outside_plugins": (
+        "Plugin fragment outside plugins/ (rp1-home #2626) — a .claude-plugin/marketplace.json source\n"
+        "that is not plugins/<name>/ carries hooks/registry-fragment.py. The loader runs any relative\n"
+        "source, but the repo-tree rules (forward / reverse / native-hook) walk only plugins/*/, so\n"
+        "nothing would ever validate it:\n"
+        "  - Move the plugin under plugins/<name>/ and point its marketplace `source` at\n"
+        "    ./plugins/<name> (epic #2211 L1 ruling: pack sources live in plugins/<pack>/), OR\n"
+        "  - Delete the fragment if that source is not meant to register hooks."
+    ),
 }
 
 # Render order for the plugin footers (stable output).
@@ -2764,6 +2870,7 @@ _PLUGIN_FOOTER_ORDER = (
     "plugin_native_hook",
     "plugin_detector",
     "plugin_marketplace",
+    "plugin_outside_plugins",
 )
 
 

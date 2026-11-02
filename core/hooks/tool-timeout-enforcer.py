@@ -5,7 +5,7 @@
 """
 Tool Timeout Enforcer - PreToolUse Hook
 
-VERSION: 1.0.1
+VERSION: 1.0.2
 
 Detects retry loops by checking if a tool has repeatedly failed in the
 current session. When the stall count exceeds the threshold (3), injects
@@ -59,7 +59,7 @@ def main():
     # Fast path: check if state file exists before importing stall_tracker
     try:
         import hashlib
-        session_hash = hashlib.md5(session_id.encode()).hexdigest()[:12]
+        session_hash = hashlib.sha256(session_id.encode()).hexdigest()[:12]
         state_dir = Path.home() / ".claude" / "hooks" / "state"
         state_file = state_dir / f"stall-counts-{session_hash}.json"
 
