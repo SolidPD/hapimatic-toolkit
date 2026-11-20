@@ -53,6 +53,7 @@ class TestPriorityAssignments:
         expected_hooks = {
             "issue-expert-reviewer-detector",
             "issue-expert-reviewer-sweep-detector",
+            "user-approval-mint-fallback",
             "issue-approval-detector",
             "epic-issue-set-organizer-detector",
             "issue-close-reason-detector",

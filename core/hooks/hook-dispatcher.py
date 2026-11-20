@@ -3,7 +3,9 @@
 Hook Dispatcher — Level-1 in-process adapter for PreToolUse / PostToolUse plus the
 Phase-2 events Stop / SessionStart / UserPromptSubmit / PostToolUseFailure (#1734).
 
-VERSION: 1.5.0  (rp1-home#2212: plugin-entry guards — matcher evaluated under a catch; any exception
+VERSION: 1.5.2  (rp1-home#3344: a malformed HOOK_DISPATCHER_CHAIN_BUDGET_MS falls back to the
+         default with a stderr notice instead of stopping the dispatcher at import. 1.5.1,
+         rp1-home#3126: a module's SIGALRM alarm and handler never outlive it. 1.5.0, rp1-home#2212: plugin-entry guards — matcher evaluated under a catch; any exception
          except KeyboardInterrupt contained (SystemExit keeps its exit-code meaning); output
          type-checked before the merge, incl. updatedInput shape and no NaN/Infinity; core unchanged)
 
@@ -114,6 +116,7 @@ import json
 import os
 import re
 import runpy
+import signal
 import subprocess
 import sys
 import time
@@ -165,7 +168,33 @@ _BLOCKING_CONTEXT_EVENTS = frozenset({"UserPromptSubmit"})
 
 # One chain time budget per event (ms). Exceeding it logs a WARNING only — no module
 # is killed and there are no per-module timeouts (R4). Tunable via env.
-CHAIN_BUDGET_MS = int(os.environ.get("HOOK_DISPATCHER_CHAIN_BUDGET_MS", "10000"))
+def _parse_chain_budget_ms(raw, default=10000):
+    """Parse HOOK_DISPATCHER_CHAIN_BUDGET_MS without ever raising (rp1-home#3344).
+
+    The dispatcher is the one registered command for every hook event, so a value
+    that stopped it at import would stop every hook. Blank means the default,
+    silently; anything but ASCII digits (``-5``, ``1e4``, ``10s``, ``+5``, ``1_000``)
+    means the default plus one stderr line. ``0`` stays valid.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return default
+    if text.isascii() and text.isdigit():
+        try:
+            return int(text)
+        except ValueError:
+            pass
+    sys.stderr.write(
+        f"hook-dispatcher: HOOK_DISPATCHER_CHAIN_BUDGET_MS={text!r:.40} is not a "
+        f"non-negative integer; using {default}\n"
+    )
+    return default
+
+
+try:
+    CHAIN_BUDGET_MS = _parse_chain_budget_ms(os.environ.get("HOOK_DISPATCHER_CHAIN_BUDGET_MS"))
+except Exception:
+    CHAIN_BUDGET_MS = 10000
 
 # ── Shadow-mode capture (#1731) ────────────────────────────────────────────────
 # The shadow registration (settings.json, added post-#1730) runs this dispatcher in
@@ -390,6 +419,10 @@ def _run_inprocess(entry: Entry, payload: dict, result: ModuleResult) -> None:
     payload_json = json.dumps(payload)
     out_buf, err_buf = io.StringIO(), io.StringIO()
     saved_stdin, saved_argv = sys.stdin, sys.argv
+    # rp1-home#3126: SIGALRM is process-wide here, so a module's alarm must not outlive it
+    # (one module's pending alarm cut the next one and read as a clean exit 0).
+    saved_alarm_handler = signal.getsignal(signal.SIGALRM)
+    signal.alarm(0)
     try:
         sys.stdin = io.StringIO(payload_json)
         # Neutralize argv (length 1) so a hook reading sys.argv[1] can't see the
@@ -400,6 +433,7 @@ def _run_inprocess(entry: Entry, payload: dict, result: ModuleResult) -> None:
                 if _module_has_main(path):
                     module = _load_module(entry.module, path)
                     rv = module.main()  # type: ignore[attr-defined]
+                    signal.setitimer(signal.ITIMER_REAL, 0)  # before the redirects exit (#3126)
                     # Capture an int return as the exit code (#1734): a hook whose
                     # BLOCK mechanism is `return N` from main() — its __main__ guard
                     # being `sys.exit(main())`, which our non-__main__ import
@@ -415,13 +449,20 @@ def _run_inprocess(entry: Entry, payload: dict, result: ModuleResult) -> None:
                     # runpy uses a throwaway namespace and does NOT populate
                     # sys.modules/_module_cache, so the logic fires once per call.
                     runpy.run_path(path, run_name="__main__")
+                    signal.setitimer(signal.ITIMER_REAL, 0)
                     result.exit_code = 0
             except SystemExit as se:
+                signal.setitimer(signal.ITIMER_REAL, 0)
                 # A string exit code prints to stderr natively — surface it too.
                 if se.code is not None and not isinstance(se.code, int):
                     err_buf.write(str(se.code))
                 result.exit_code = _systemexit_code(se.code)
+            except BaseException:
+                signal.setitimer(signal.ITIMER_REAL, 0)  # a raise too, before the redirects exit
+                raise
     finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, saved_alarm_handler if saved_alarm_handler is not None else signal.SIG_DFL)
         sys.stdin = saved_stdin
         sys.argv = saved_argv
         result.stdout = out_buf.getvalue()

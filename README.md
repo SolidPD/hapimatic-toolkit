@@ -19,8 +19,28 @@ dispatcher, a plugin loader, and a small set of general-purpose hooks, installed
 - **The registration validator.** `hooks/lib/hook_registration_validator.py` checks that
   every registered hook exists and every hook on disk is registered.
 - **General-purpose hooks.** A stall logger and a retry-loop warning for failing tools, an
-  idle-gap warning, and lint-on-write (`ruff` for Python, ESLint for JavaScript and
-  TypeScript, each only when it is installed).
+  idle-gap warning, and lint-on-write (`ruff` for Python when it is installed, and ESLint
+  for JavaScript and TypeScript only in a project root you list).
+- **lint-on-write and ESLint.** A project's ESLint config is code: ESLint runs
+  `eslint.config.js` to load it. So the hook lints JavaScript and TypeScript only after you
+  list the project's root in `~/.claude/lint-on-write-trusted-roots.txt` (the hook also
+  reads a file of the same name beside itself, which this repository does not ship). Write
+  one directory per line, absolute or starting with `~/`; a line ending in `/*` lists that
+  directory's direct children; `#` lines are comments. The listed directory must be the one
+  that holds the project's flat config (`eslint.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or
+  `.cts`); a project on a legacy `.eslintrc*` config is not linted. The hook runs the
+  project's own ESLint install (`node_modules/.bin/eslint`), never `npx` or `bun x`, so it
+  installs nothing. A subdirectory with its own flat config is linted only when it is listed
+  too. Each skipped ESLint run is logged to `~/.claude/logs/lint-on-write.jsonl`.
+  Listing a root trusts its code: a pull request or any other checkout placed in a listed
+  root (or in a directory listed with `/*`) runs its own config and ESLint, and a file
+  write inside a listed root, to its `eslint.config.*` or a module that config imports,
+  runs that code at once. A plugin or parser in a listed root's config that loads its own
+  config file relative to the linted file (for example eslint-plugin-prettier with a
+  Prettier config, or @babel/eslint-parser with a Babel config) can run such a file from
+  any subdirectory of the root, including an extracted archive, so list only roots whose
+  config you have read. Review outside code in a directory you have not listed.
+  Ruff runs without its cache.
 - **Routing stubs.** Some detectors in the priority group are placeholders. Each keeps its
   name and its place in the order, and never matches unless the plugin that provides it is
   installed.
@@ -88,6 +108,11 @@ asked before it is replaced.
 The earlier update step, `cd ~/claude-core && git pull` on its own, now updates only a
 `--symlink` install, whose links follow this repository. For a copy install it leaves the
 installed files as they were, so always run `./install.sh --minimal` after the pull.
+
+**Upgrade note (lint-on-write 2.0.0).** Before this release lint-on-write ran ESLint for
+every project that had an ESLint config. Now it lints none until you list a root in
+`~/.claude/lint-on-write-trusted-roots.txt` (see "lint-on-write and ESLint" above), so add
+the projects you want linted to that file after updating.
 
 ## Uninstall
 

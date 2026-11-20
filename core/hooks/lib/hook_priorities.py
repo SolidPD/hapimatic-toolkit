@@ -33,6 +33,7 @@ Priority Order (highest first):
   10. github-project-detector      - GitHub Project v2 tracker creation (rp1-home #745, placed before project-creator)
   10. project-creator-detector     - Project scaffolding (least specific)
   11. issue-transfer-detector      - Transfer issue between repos (after lifecycle hooks)
+  12. presentation-router-detector - New talk / slide deck → create-presentation (rp1-home #2827; last, so issue detectors win first-match)
 
 Requirements:
   - Hooks in settings.json MUST be ordered highest-priority first
@@ -62,6 +63,7 @@ SENTINEL_DIR = Path(os.path.expanduser("~/.claude/hooks/.sentinels"))
 HOOK_PRIORITIES = {
     "issue-expert-reviewer-sweep-detector": 0,
     "issue-expert-reviewer-detector": 0,
+    "user-approval-mint-fallback": 1,
     "issue-approval-detector": 1,
     "epic-issue-set-organizer-detector": 1,
     "issue-close-reason-detector": 2,

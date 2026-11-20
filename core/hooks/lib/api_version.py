@@ -2,7 +2,7 @@
 LIB_API_VERSION — the versioned contract surface of ``.claude/hooks/lib/`` that a
 plugin registry fragment (``<plugin-root>/hooks/registry-fragment.py``) may import.
 
-VERSION: 1.0.0  (this module's own file version; distinct from LIB_API_VERSION below)
+VERSION: 1.1.0  (this module's own file version; distinct from LIB_API_VERSION below)
 
 Part of the plugin registry-fragment contract + loader (rp1-home#2212, epic #2211
 Premium plugin packaging E3). A fragment declares the MAJOR of this API it targets
@@ -32,11 +32,13 @@ home to bump.
 
 from __future__ import annotations
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 # The versioned API surface, MAJOR.MINOR. Bump MAJOR on any signature/behaviour
 # change to a listed module; bump MINOR when adding a module to LIB_API_MODULES.
-LIB_API_VERSION = "1.0"
+# 2.0 (rp1-home#3226): orchestration_markers.has_orchestration_marker now also returns
+# True for a Pins answers message — a behaviour change to a listed module, so MAJOR.
+LIB_API_VERSION = "2.0"
 
 # The lib/ modules a plugin fragment's hooks are permitted to import as the stable
 # contract surface. The warner names this list when a fragment's declared MAJOR

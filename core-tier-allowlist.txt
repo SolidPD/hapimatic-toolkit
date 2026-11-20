@@ -50,6 +50,7 @@ core/hooks/stall-logger.py
 core/hooks/tests/test_hook_priorities.py
 core/hooks/tool-timeout-enforcer.py
 core/hooks/unified-prompt-dispatcher.py
+core/hooks/user-approval-mint-fallback.py
 install.sh
 lib/installer/common.sh
 settings/generate-settings.py

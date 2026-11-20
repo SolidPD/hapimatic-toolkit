@@ -502,10 +502,11 @@ def check_detector_drift(input_data: dict) -> "str | None":
 def _combine_dispatch_output(dispatch_result: "dict | None", banner: "str | None") -> "dict | None":
     """Fold the drift banner (R2/KD2(c)) INTO the single JSON object the dispatcher
     returns — never a bare print(). The banner rides BOTH channels: Claude sees
-    `hookSpecificOutput.additionalContext`; the operator sees the top-level
-    `systemMessage` (the only operator-visible channel under hook-dispatcher.py's
-    _merge_context). On a healthy tree (banner is None) the dispatch result is
-    returned unchanged — byte-identical to pre-#2006 (KD6)."""
+    `hookSpecificOutput.additionalContext`; the top-level `systemMessage` is shown
+    by Claude Code's own terminal only (in Hapimatic the operator does not see it:
+    the launcher forwards only a `system` message of subtype `result`, and Claude
+    Code does not give a systemMessage to the model; rp1-home#3245). On a healthy
+    tree (banner is None) the dispatch result is returned unchanged — byte-identical to pre-#2006 (KD6)."""
     if banner is None:
         return dispatch_result
 

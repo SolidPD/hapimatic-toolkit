@@ -27,6 +27,7 @@ HOOKS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PRIORITY_GROUP = [
     {"name": "issue-expert-reviewer-sweep-detector", "priority": 0},
     {"name": "issue-expert-reviewer-detector", "priority": 0},
+    {"name": "user-approval-mint-fallback", "priority": 1},
     {"name": "issue-approval-detector", "priority": 1},
     {"name": "epic-issue-set-organizer-detector", "priority": 1},
     {"name": "issue-close-reason-detector", "priority": 2},
